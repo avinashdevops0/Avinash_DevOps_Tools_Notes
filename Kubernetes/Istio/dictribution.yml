@@ -1,0 +1,39 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestributionRule
+metadata:
+  name: user
+spec:
+  host: reviers
+  subsets:
+    - name: v1
+      labels:
+        version: v1beta1
+    - name: v2
+      labels:
+        version: v1beta2 
+    - name: v3
+      labels:
+        version: v1beta3
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: user
+spec:
+  hosts:
+    - reviers
+  http:
+    - route:
+        - destination:
+            host: reviers
+            subset: v1beta1
+            weight: 10
+        - destination:
+            host: reviers
+            subset: v1beta2
+            weight: 10
+        - destination:
+            host: reviers
+            subset: v1beta3
+            weight:50

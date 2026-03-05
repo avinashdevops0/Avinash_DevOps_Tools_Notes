@@ -1,0 +1,369 @@
+pipeline {
+    agent any
+    environment {
+        AWS_ACCOUNT_ID="401778242067"
+        ECR_REPO_NAME="ristorante"
+        IMAGE_TAG="${BUILD_NUMBER}"
+        REGION="us-east-1"
+        REGISTRY_URL="${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+    }
+    stages {
+        stage('Clean WorkSpace') {
+            steps {
+                leanWs()
+            }
+        }
+        stage('Code') {
+            steps {
+                git branch:'main',
+                    url: 'https://github.com/avinashdevops0/Avinash_DevOps_Tools_Notes.git'
+            }
+        }
+        stage('SonarQube Quality Check') {
+            steps {
+                script {
+                    def scannerHome = tool 'ristorante'
+                    withSonarQubeEnv('ristorante') {
+                        sh """
+                        ${scannerHome}/bin/sonar-scanner \
+                          -Dsonar.projectKey=Ristorante \
+                          -Dsonar.projectName=Ristorante \
+                          -Dsonar.sources=. \
+                          -Dsonar.java.binaries=.
+                        """
+                    }
+                }
+            }
+        }
+        // stage('Quality Gate') {
+        //     steps {
+        //         timeout(time: 2, unit: 'MINUTES') {
+        //             waitForQualityGate abortPipeline: true
+        //         }
+        //     }
+        // }
+        stage('Image Build') {
+            steps {
+                dir('/My_DevOps_Projects/Ristorante>') {
+                    sh 'docker build -t ristorante .'
+                }
+            }
+        }
+        stage('Image Scan Using Trivy') {
+            steps{
+
+            }
+        }
+        stage('Image Tagging') {
+            steps{
+                docker tag ${ECR_REPO_NAME}:latest ${REGISTRY_URL}/${ECR_REPO_NAME}:${IMAGE_TAG}
+            }
+        }
+        stage('ECR Login and Push') {
+            steps {
+                script {
+                    withCredentials([usernamePassword(credentialsId: 'ECR_AWS', usernameVariable: 'ACCESS_KEY_ID', passwordVariable: 'SECRET_ACCESS_KEY')]) {
+        
+                sh 'aws ecr get-login-password --region ${REGION} | docker login --username AWS --password-stdin ${REGISTRY_URL}'
+                    }
+                }
+            }
+        }
+        stage('Updaing Helm Chat') {
+            steps {
+                sh """
+                helm upgrade --install ristorante-v1 /root/helm-chats/ristorante/ \
+                --set image.repository=${REGISTRY_URL}/${ECR_REPO_NAME} \
+                --set image.imagetag=${IMAGE_TAG}
+                """
+
+            }
+        
+        }
+        // stage('Deploy in EKS Cluster') {
+        //     steps{
+
+        //     }
+        // }
+    }
+}
+
+
+
+
+
+
+// ================================================================
+//  ROBUST JENKINS PIPELINE — Ristorante (Node.js → ECR → EKS)
+//  Fixed, hardened, and production-ready version
+// ================================================================
+
+pipeline {
+
+    agent any
+
+    // ── Options ──────────────────────────────────────────────
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')       // kill hung builds
+        timestamps()
+        ansiColor('xterm')
+        disableConcurrentBuilds()                 // no parallel runs on same branch
+    }
+
+    // ── Environment ───────────────────────────────────────────
+    environment {
+        // ── AWS / ECR  (NO secrets here — use Jenkins Credentials)
+        AWS_ACCOUNT_ID  = "401778242067"
+        ECR_REPO_NAME   = "ristorante"
+        REGION          = "us-east-1"
+        REGISTRY_URL    = "${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+
+        // ── Image tag = build number + short git SHA for full traceability
+        SHORT_SHA       = "${GIT_COMMIT ? GIT_COMMIT.take(7) : 'unknown'}"
+        IMAGE_TAG       = "${BUILD_NUMBER}-${SHORT_SHA}"
+        FULL_IMAGE      = "${REGISTRY_URL}/${ECR_REPO_NAME}:${IMAGE_TAG}"
+
+        // ── Helm
+        HELM_CHART_PATH = "/root/helm-charts/ristorante"   // fixed typo: chats → charts
+        HELM_RELEASE    = "ristorante-v1"
+
+        // ── SonarQube
+        SONAR_PROJECT   = "Ristorante"
+
+        // ── Jenkins Credential IDs  (configure in Jenkins → Credentials)
+        CRED_AWS        = "ECR_AWS"                        // AWS key id + secret
+        CRED_SONAR      = "sonarqube-token"
+    }
+
+    // ================================================================
+    //  STAGES
+    // ================================================================
+    stages {
+
+        // ── 1. Clean Workspace ────────────────────────────────
+        stage('🧹 Clean Workspace') {
+            steps {
+                cleanWs()   // fixed: was leanWs() (typo)
+            }
+        }
+
+        // ── 2. Checkout Code ──────────────────────────────────
+        stage('📥 Checkout Code') {
+            steps {
+                git branch: 'main',
+                    url: 'https://github.com/avinashdevops0/Avinash_DevOps_Tools_Notes.git'
+
+                script {
+                    // Capture git SHA after checkout
+                    env.SHORT_SHA = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+                    env.IMAGE_TAG  = "${BUILD_NUMBER}-${env.SHORT_SHA}"
+                    env.FULL_IMAGE = "${REGISTRY_URL}/${ECR_REPO_NAME}:${env.IMAGE_TAG}"
+                    echo "📌 Building image: ${env.FULL_IMAGE}"
+                }
+            }
+        }
+
+        // ── 3. SonarQube Analysis ─────────────────────────────
+        stage('🔬 SonarQube Analysis') {
+            steps {
+                script {
+                    def scannerHome = tool 'ristorante'
+                    withSonarQubeEnv('ristorante') {
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                              -Dsonar.projectKey=${SONAR_PROJECT} \
+                              -Dsonar.projectName=${SONAR_PROJECT} \
+                              -Dsonar.sources=. \
+                              -Dsonar.java.binaries=.
+                        """
+                    }
+                }
+            }
+        }
+
+        // ── 4. SonarQube Quality Gate ─────────────────────────
+        //    Re-enabled: scanning without enforcing the gate is pointless
+        stage('✅ Quality Gate') {
+            steps {
+                timeout(time: 3, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true   // hard-fail on quality violations
+                }
+            }
+        }
+
+        // ── 5. Docker Build ───────────────────────────────────
+        stage('🐳 Docker Build') {
+            steps {
+                dir('My_DevOps_Projects/Ristorante') {     // fixed: removed stray '>' char
+                    sh """
+                        docker build \
+                          --build-arg BUILD_DATE=\$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+                          --build-arg VCS_REF=${env.SHORT_SHA} \
+                          --label "build.number=${BUILD_NUMBER}" \
+                          --label "git.commit=${env.SHORT_SHA}" \
+                          -t ${ECR_REPO_NAME}:${env.IMAGE_TAG} \
+                          -t ${ECR_REPO_NAME}:latest \
+                          .
+                    """
+                }
+            }
+        }
+
+        // ── 6. Trivy Image Scan ───────────────────────────────
+        //    Was completely empty — now fully implemented
+        stage('🛡️ Trivy Image Scan') {
+            steps {
+                script {
+                    // Ensure Trivy is installed
+                    sh 'trivy --version || { echo "Trivy not found — install it on the agent"; exit 1; }'
+
+                    // Scan for CRITICAL and HIGH vulnerabilities
+                    // --exit-code 1 fails the build if vulns found (remove to warn-only)
+                    sh """
+                        trivy image \
+                          --exit-code 1 \
+                          --severity CRITICAL,HIGH \
+                          --no-progress \
+                          --format table \
+                          --output trivy-report.txt \
+                          ${ECR_REPO_NAME}:${env.IMAGE_TAG}
+                    """
+                }
+            }
+            post {
+                always {
+                    // Archive the Trivy report regardless of pass/fail
+                    archiveArtifacts artifacts: 'trivy-report.txt', allowEmptyArchive: true
+                    sh 'cat trivy-report.txt || true'
+                }
+                failure {
+                    echo "⚠️  Trivy found CRITICAL/HIGH vulnerabilities — see trivy-report.txt"
+                }
+            }
+        }
+
+        // ── 7. Tag Image for ECR ──────────────────────────────
+        stage('🏷️ Tag Image') {
+            steps {
+                // fixed: was bare groovy — must be inside sh ""
+                sh """
+                    docker tag ${ECR_REPO_NAME}:${env.IMAGE_TAG} ${env.FULL_IMAGE}
+                    docker tag ${ECR_REPO_NAME}:latest ${REGISTRY_URL}/${ECR_REPO_NAME}:latest
+                """
+            }
+        }
+
+        // ── 8. ECR Login & Push ───────────────────────────────
+        //    Fixed: push was missing after login
+        stage('📤 ECR Login & Push') {
+            steps {
+                script {
+                    withCredentials([
+                        usernamePassword(
+                            credentialsId: "${CRED_AWS}",
+                            usernameVariable: 'AWS_ACCESS_KEY_ID',
+                            passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                        )
+                    ]) {
+                        sh """
+                            # Ensure ECR repo exists (creates it if missing)
+                            aws ecr describe-repositories \
+                                --repository-names ${ECR_REPO_NAME} \
+                                --region ${REGION} \
+                            || aws ecr create-repository \
+                                --repository-name ${ECR_REPO_NAME} \
+                                --region ${REGION}
+
+                            # Login
+                            aws ecr get-login-password --region ${REGION} \
+                              | docker login --username AWS --password-stdin ${REGISTRY_URL}
+
+                            # Push versioned tag
+                            docker push ${env.FULL_IMAGE}
+
+                            # Push :latest tag
+                            docker push ${REGISTRY_URL}/${ECR_REPO_NAME}:latest
+
+                            echo "✅ Pushed: ${env.FULL_IMAGE}"
+                        """
+                    }
+                }
+            }
+        }
+
+        // ── 9. Update Helm Chart & Deploy to EKS ─────────────
+        stage('🚀 Helm Deploy') {
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: "${CRED_AWS}",
+                        usernameVariable: 'AWS_ACCESS_KEY_ID',
+                        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                    )
+                ]) {
+                    sh """
+                        # Update kubeconfig for EKS
+                        aws eks update-kubeconfig --region ${REGION} --name ristorante-cluster
+
+                        # Helm upgrade/install with correct image tag
+                        # fixed: helm-chats → helm-charts (typo)
+                        helm upgrade --install ${HELM_RELEASE} ${HELM_CHART_PATH} \
+                          --set image.repository=${REGISTRY_URL}/${ECR_REPO_NAME} \
+                          --set image.tag=${env.IMAGE_TAG} \
+                          --set image.pullPolicy=Always \
+                          --wait \
+                          --timeout 5m \
+                          --atomic
+
+                        echo "✅ Helm release '${HELM_RELEASE}' deployed successfully"
+                        helm status ${HELM_RELEASE}
+                    """
+                }
+            }
+        }
+
+    } // end stages
+
+    // ================================================================
+    //  POST ACTIONS
+    // ================================================================
+    post {
+
+        always {
+            script {
+                // Always clean up local Docker images to save disk space
+                sh """
+                    docker rmi ${env.FULL_IMAGE}                          || true
+                    docker rmi ${ECR_REPO_NAME}:${env.IMAGE_TAG}          || true
+                    docker rmi ${ECR_REPO_NAME}:latest                    || true
+                    docker rmi ${REGISTRY_URL}/${ECR_REPO_NAME}:latest    || true
+                    docker logout ${REGISTRY_URL}                         || true
+                """
+            }
+            cleanWs()
+        }
+
+        success {
+            echo """
+            ╔══════════════════════════════════════════╗
+            ║  ✅  PIPELINE PASSED                     ║
+            ║  Image : ${env.FULL_IMAGE}
+            ║  Build : #${BUILD_NUMBER}                ║
+            ╚══════════════════════════════════════════╝
+            """
+        }
+
+        failure {
+            echo """
+            ╔══════════════════════════════════════════╗
+            ║  ❌  PIPELINE FAILED                     ║
+            ║  Build  : #${BUILD_NUMBER}               ║
+            ║  Check  : ${BUILD_URL}console            ║
+            ╚══════════════════════════════════════════╝
+            """
+        }
+
+    }
+
+} // end pipeline
